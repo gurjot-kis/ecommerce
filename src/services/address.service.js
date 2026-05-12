@@ -71,7 +71,7 @@ export const AddressService = {
   }) => {
     const normalizedUserId = normalizeId(user_id);
     if (!normalizedUserId) {
-      throw new Error("user_id is required");
+      throw new Error("User id is required");
     }
 
     if (!fullName || !phone || !addressLine1 || !city || !state || !country || !pincode) {
