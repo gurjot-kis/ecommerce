@@ -1,0 +1,91 @@
+import mongoose from "mongoose";
+import crypto from "crypto";
+
+const OrderItemSchema = new mongoose.Schema(
+  {
+    product_id: { type: String, required: true, trim: true },
+    name: { type: String, required: true, trim: true },
+    slug: { type: String, default: "", trim: true },
+    mainImage: { type: String, default: "", trim: true },
+    currency: { type: String, required: true, trim: true },
+    price: { type: Number, required: true, min: 0 },
+    sellingPrice: { type: Number, required: true, min: 0 },
+    quantity: { type: Number, required: true, min: 1 },
+    itemTotal: { type: Number, required: true, min: 0 },
+  },
+  { _id: false }
+);
+
+const ShippingAddressSchema = new mongoose.Schema(
+  {
+    address_id: { type: String, required: true, trim: true },
+    fullName: { type: String, required: true, trim: true },
+    phone: { type: String, required: true, trim: true },
+    addressLine1: { type: String, required: true, trim: true },
+    addressLine2: { type: String, default: "", trim: true },
+    landmark: { type: String, default: "", trim: true },
+    city: { type: String, required: true, trim: true },
+    state: { type: String, required: true, trim: true },
+    country: { type: String, required: true, trim: true },
+    pincode: { type: String, required: true, trim: true },
+  },
+  { _id: false }
+);
+
+const OrderSchema = new mongoose.Schema(
+  {
+    order_id: {
+      type: String,
+      required: true,
+      unique: true,
+      default: () => crypto.randomUUID(),
+      index: true,
+    },
+    user_id: {
+      type: String,
+      required: true,
+      index: true,
+      trim: true,
+    },
+    items: {
+      type: [OrderItemSchema],
+      default: [],
+    },
+    shippingAddress: {
+      type: ShippingAddressSchema,
+      required: true,
+    },
+    totalItems: {
+      type: Number,
+      required: true,
+      min: 1,
+    },
+    grandTotal: {
+      type: Number,
+      required: true,
+      min: 0,
+    },
+    paymentMethod: {
+      type: String,
+      default: "COD",
+      trim: true,
+    },
+    paymentReceived: {
+      type: Number,
+      enum: [0, 1],
+      default: 0,
+      index: true,
+    },
+    status: {
+      type: String,
+      enum: ["placed", "confirmed", "shipped", "delivered", "cancelled"],
+      default: "placed",
+      index: true,
+    },
+  },
+  { timestamps: true }
+);
+
+const Order = mongoose.model("Order", OrderSchema);
+
+export default Order;

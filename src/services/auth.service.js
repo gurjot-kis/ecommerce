@@ -1,0 +1,301 @@
+import bcrypt from "bcryptjs";
+import jwt from "jsonwebtoken";
+import crypto from "crypto";
+import User from "../models/user.model.js";
+import { sendEmail } from "../utils/email.js";
+import { sendTwilioSms } from "../utils/twilio-sms.js";
+
+const JWT_SECRET = process.env.JWT_SECRET || "dev-secret";
+const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || "365d";
+
+const signAuthToken = (user) => {
+  // Payload matches the keys you showed: `user_id`, `email`.
+  return jwt.sign(
+    { user_id: user.user_id, email: user.email, role: user.role || "User" },
+    JWT_SECRET,
+    { algorithm: "HS256", expiresIn: JWT_EXPIRES_IN }
+  );
+};
+
+const digitsOnly = (v) => String(v || "").replace(/\D/g, "");
+
+const findUserByPhone = async (rawPhone) => {
+  const d = digitsOnly(rawPhone);
+  if (!d) return null;
+  const last10 = d.length >= 10 ? d.slice(-10) : d;
+  return User.findOne({
+    $or: [
+      { phone: String(rawPhone).trim() },
+      { phone: d },
+      { phone: last10 },
+      { phone: `+91${last10}` },
+      { phone: `91${last10}` },
+    ],
+  }).exec();
+};
+
+const phoneToE164 = (rawPhone) => {
+  const d = digitsOnly(rawPhone);
+  const cc = String(process.env.TWILIO_DEFAULT_COUNTRY_CODE || "91").replace(/\D/g, "");
+  if (!d) return "";
+  if (String(rawPhone || "").trim().startsWith("+")) {
+    return `+${d}`;
+  }
+  if (d.length === 10) return `+${cc}${d}`;
+  return `+${d}`;
+};
+
+const buildAuthResponseData = (user, token) => {
+  return {
+    user_id: user.user_id,
+    name: user.name,
+    email: user.email,
+    role: user.role || "User",
+    profilePicture: user.profilePicture || "",
+    token,
+  };
+};
+
+export const AuthService = {
+  signup: async ({ email, password, fullName, phone, address }) => {
+    if (!email || !password || !fullName) {
+      throw new Error("Email, password, and fullName are required");
+    }
+
+    const normalizedEmail = String(email).trim().toLowerCase();
+    const normalizedFullName = String(fullName).trim();
+
+    const existingUser = await User.findOne({ email: normalizedEmail }).exec();
+    if (existingUser) {
+      throw new Error("User already exists");
+    }
+
+    const passwordHash = await bcrypt.hash(String(password), 10);
+
+    const user = await User.create({
+      email: normalizedEmail,
+      name: normalizedFullName,
+      phone: phone ? String(phone) : "",
+      address: address ? String(address) : "",
+      role: "User",
+      passwordHash,
+    });
+
+    const token = signAuthToken(user);
+    return buildAuthResponseData(user, token);
+  },
+
+  changePassword: async ({ user_id, newPassword, confirmnewPassword }) => {
+    if (!user_id) {
+      throw new Error("user_id is required");
+    }
+    if (!newPassword || !confirmnewPassword) {
+      throw new Error("newPassword and confirmnewPassword are required");
+    }
+    if (String(newPassword).trim() !== String(confirmnewPassword).trim()) {
+      throw new Error("Passwords do not match");
+    }
+    if (String(newPassword).trim().length < 6) {
+      throw new Error("New password must be at least 6 characters");
+    }
+
+    const user = await User.findOne({ user_id: String(user_id).trim() }).exec();
+    if (!user) {
+      throw new Error("User not found");
+    }
+
+    user.passwordHash = await bcrypt.hash(String(newPassword).trim(), 10);
+    await user.save();
+
+    return {
+      user_id: user.user_id,
+      email: user.email,
+    };
+  },
+
+  forgotPassword: async ({ email }) => {
+    if (!email) throw new Error("Email is required");
+
+    const normalizedEmail = String(email).trim().toLowerCase();
+    const user = await User.findOne({ email: normalizedEmail }).exec();
+    if (!user) throw new Error("No account found with this email");
+
+    // Generate a 6-digit OTP
+    const otp = String(Math.floor(100000 + Math.random() * 900000));
+    const otpExpiry = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+    user.resetOtp = otp;
+    user.resetOtpExpiry = otpExpiry;
+    user.resetToken = null;
+    user.resetTokenExpiry = null;
+    await user.save();
+
+    await sendEmail({
+      to: normalizedEmail,
+      subject: "Your Password Reset OTP",
+      text: `Your OTP for password reset is: ${otp}\n\nThis OTP is valid for 10 minutes. Do not share it with anyone.`,
+      html: `<p>Your OTP for password reset is:</p><h2>${otp}</h2><p>This OTP is valid for <strong>10 minutes</strong>. Do not share it with anyone.</p>`,
+    });
+
+    return { email: normalizedEmail };
+  },
+
+  verifyOtp: async ({ email, otp }) => {
+    if (!email || !otp) throw new Error("Email and OTP are required");
+
+    const normalizedEmail = String(email).trim().toLowerCase();
+    const user = await User.findOne({ email: normalizedEmail }).exec();
+    if (!user) throw new Error("No account found with this email");
+
+    if (!user.resetOtp || !user.resetOtpExpiry) {
+      throw new Error("OTP not requested or already used");
+    }
+    if (new Date() > user.resetOtpExpiry) {
+      throw new Error("OTP has expired");
+    }
+    if (user.resetOtp !== String(otp).trim()) {
+      throw new Error("Invalid OTP");
+    }
+
+    // OTP is valid — issue a short-lived reset token
+    const resetToken = crypto.randomBytes(32).toString("hex");
+    const resetTokenExpiry = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
+
+    user.resetOtp = null;
+    user.resetOtpExpiry = null;
+    user.resetToken = resetToken;
+    user.resetTokenExpiry = resetTokenExpiry;
+    await user.save();
+
+    return { resetToken };
+  },
+
+  resetPassword: async ({ resetToken, newPassword, confirmPassword }) => {
+    if (!resetToken) throw new Error("Reset token is required");
+    if (!newPassword || !confirmPassword) {
+      throw new Error("newPassword and confirmPassword are required");
+    }
+    if (String(newPassword).trim() !== String(confirmPassword).trim()) {
+      throw new Error("Passwords do not match");
+    }
+    if (String(newPassword).trim().length < 6) {
+      throw new Error("Password must be at least 6 characters");
+    }
+
+    const user = await User.findOne({ resetToken: String(resetToken).trim() }).exec();
+    if (!user) throw new Error("Invalid or expired reset token");
+    if (!user.resetTokenExpiry || new Date() > user.resetTokenExpiry) {
+      throw new Error("Invalid or expired reset token");
+    }
+
+    user.passwordHash = await bcrypt.hash(String(newPassword).trim(), 10);
+    user.resetToken = null;
+    user.resetTokenExpiry = null;
+    await user.save();
+
+    return { email: user.email };
+  },
+
+  login: async ({ email, password }) => {
+    if (!email || !password) {
+      throw new Error("Email and password are required");
+    }
+
+    const normalizedEmail = String(email).trim().toLowerCase();
+    const user = await User.findOne({ email: normalizedEmail }).exec();
+
+    if (!user) {
+      throw new Error("Invalid credentials");
+    }
+
+    const isMatch = await bcrypt.compare(String(password), user.passwordHash);
+    if (!isMatch) {
+      throw new Error("Invalid credentials");
+    }
+
+    const token = signAuthToken(user);
+    return buildAuthResponseData(user, token);
+  },
+
+  loginTwilio: async ({ phone, password }) => {
+    if (!phone || !password) {
+      throw new Error("phone and password are required");
+    }
+
+    const user = await findUserByPhone(phone);
+    if (!user || !user.passwordHash) {
+      throw new Error("Invalid credentials");
+    }
+
+    const isMatch = await bcrypt.compare(String(password), user.passwordHash);
+    if (!isMatch) {
+      throw new Error("Invalid credentials");
+    }
+
+    const otp = String(Math.floor(100000 + Math.random() * 900000));
+    const otpExpiry = new Date(Date.now() + 10 * 60 * 1000);
+
+    user.loginTwilioOtp = otp;
+    user.loginTwilioOtpExpiry = otpExpiry;
+    await user.save();
+
+    const to = phoneToE164(phone);
+    try {
+      const result = await sendTwilioSms(
+        to,
+        `Your login OTP is ${otp}. It is valid for 10 minutes. Do not share this code.`
+      );
+
+      if (!result.sent) {
+        user.loginTwilioOtp = null;
+        user.loginTwilioOtpExpiry = null;
+        await user.save();
+        throw new Error("SMS could not be sent. Check Twilio configuration.");
+      }
+    } catch (e) {
+      user.loginTwilioOtp = null;
+      user.loginTwilioOtpExpiry = null;
+      await user.save();
+      if (e?.message === "SMS could not be sent. Check Twilio configuration.") throw e;
+      throw new Error(e?.message || "Failed to send SMS");
+    }
+
+    return { phone: phoneToE164(phone) };
+  },
+
+  loginTwilioVerify: async ({ phone, password, otp }) => {
+    if (!phone || !password || !otp) {
+      throw new Error("phone, password, and otp are required");
+    }
+
+    const user = await findUserByPhone(phone);
+    if (!user || !user.passwordHash) {
+      throw new Error("Invalid credentials");
+    }
+
+    const isMatch = await bcrypt.compare(String(password), user.passwordHash);
+    if (!isMatch) {
+      throw new Error("Invalid credentials");
+    }
+
+    if (!user.loginTwilioOtp || !user.loginTwilioOtpExpiry) {
+      throw new Error("OTP not requested or already used");
+    }
+    if (new Date() > user.loginTwilioOtpExpiry) {
+      throw new Error("OTP has expired");
+    }
+    if (user.loginTwilioOtp !== String(otp).trim()) {
+      throw new Error("Invalid OTP");
+    }
+
+    user.loginTwilioOtp = null;
+    user.loginTwilioOtpExpiry = null;
+    await user.save();
+
+    const token = signAuthToken(user);
+    return buildAuthResponseData(user, token);
+  },
+};
+
+export default AuthService;
+

@@ -1,0 +1,8 @@
+node_modules/
+.env
+.cursor/
+/src/uploads/
+/public/storage
+/storage/*.key
+.idea/
+.vscode/
