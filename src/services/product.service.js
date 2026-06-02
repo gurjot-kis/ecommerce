@@ -13,6 +13,58 @@ const toSlug = (value) =>
 const normalizeProductId = (value) => String(value).trim().replace(/^:/, "");
 const normalizeId = (value) => (value ? String(value).trim() : "");
 
+const assertCanModifyProduct = (product, actor) => {
+  if (!actor?.role || actor.role === "SuperAdmin") {
+    return;
+  }
+
+  if (actor.role === "Vendor" && product.user_id === actor.user_id) {
+    return;
+  }
+
+  throw new Error("Forbidden: you can only modify your own products");
+};
+
+/** Accepts array, JSON string, comma-separated URLs, or single URL (common with multipart/form-data). */
+export const normalizeFeaturedImagesInput = (value) => {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((img) => toStringOrEmpty(img)).filter(Boolean);
+  }
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return undefined;
+    }
+
+    if (trimmed.startsWith("[")) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) {
+          return parsed.map((img) => toStringOrEmpty(img)).filter(Boolean);
+        }
+      } catch {
+        // fall through to single-value handling
+      }
+    }
+
+    if (trimmed.includes(",")) {
+      return trimmed
+        .split(",")
+        .map((img) => toStringOrEmpty(img))
+        .filter(Boolean);
+    }
+
+    return [trimmed];
+  }
+
+  throw new Error("featuredImages must be an array");
+};
+
 const mapProduct = (product) => ({
   product_id: product.product_id,
   name: product.name,
@@ -31,8 +83,25 @@ const mapProduct = (product) => ({
   costPrice: product.costPrice,
   sellingPrice: product.sellingPrice,
   price: product.price,
+  role: product.role,
+  user_id: product.user_id,
   createdAt: product.createdAt,
   updatedAt: product.updatedAt,
+});
+
+const mapPublicCategory = (category) => ({
+  category_id: category.category_id,
+  name: category.name,
+  description: category.description || "",
+  category_image: category.category_image || "",
+});
+
+const mapPublicSubCategory = (subCategory) => ({
+  sub_category_id: subCategory.sub_category_id,
+  category_id: subCategory.category_id,
+  name: subCategory.name,
+  description: subCategory.description || "",
+  sub_category_image: subCategory.sub_category_image || "",
 });
 
 const validateCategoryAndSubCategory = async (category_id, sub_category_id) => {
@@ -110,6 +179,8 @@ export const ProductService = {
       costPrice,
       sellingPrice,
       price,
+      role,
+      user_id,
     } = payload || {};
 
     const inputCategoryId = category_id || category;
@@ -127,6 +198,12 @@ export const ProductService = {
       throw new Error(
         "name, mainImage, sku, currency, stock, costPrice and sellingPrice are required"
       );
+    }
+
+    const normalizedRole = toStringOrEmpty(role);
+    const normalizedUserId = toStringOrEmpty(user_id);
+    if (!normalizedRole || !normalizedUserId) {
+      throw new Error("role and user_id are required");
     }
 
     const resolvedIds = await resolveCategoryAndSubCategory({
@@ -153,9 +230,7 @@ export const ProductService = {
       category_id: toStringOrEmpty(resolvedIds.category_id),
       sub_category_id: toStringOrEmpty(resolvedIds.sub_category_id),
       mainImage: toStringOrEmpty(mainImage),
-      featuredImages: Array.isArray(featuredImages)
-        ? featuredImages.map((img) => toStringOrEmpty(img)).filter(Boolean)
-        : [],
+      featuredImages: normalizeFeaturedImagesInput(featuredImages) || [],
       sku: normalizedSku,
       status: status || "pending",
       currency: toUpper(currency),
@@ -165,12 +240,14 @@ export const ProductService = {
       costPrice: Number(costPrice),
       sellingPrice: Number(sellingPrice),
       price: Number(price ?? sellingPrice),
+      role: normalizedRole,
+      user_id: normalizedUserId,
     });
 
     return mapProduct(product);
   },
 
-  updateProduct: async (product_id, payload) => {
+  updateProduct: async (product_id, payload, actor) => {
     if (!product_id) {
       throw new Error("product_id is required");
     }
@@ -182,6 +259,8 @@ export const ProductService = {
     if (!product) {
       throw new Error("Product not found");
     }
+
+    assertCanModifyProduct(product, actor);
 
     const nextCategoryId =
       payload?.category_id !== undefined || payload?.category !== undefined
@@ -266,12 +345,10 @@ export const ProductService = {
     }
     if (payload?.mainImage !== undefined) product.mainImage = toStringOrEmpty(payload.mainImage);
     if (payload?.featuredImages !== undefined) {
-      if (!Array.isArray(payload.featuredImages)) {
-        throw new Error("featuredImages must be an array");
+      const normalizedFeatured = normalizeFeaturedImagesInput(payload.featuredImages);
+      if (normalizedFeatured !== undefined) {
+        product.featuredImages = normalizedFeatured;
       }
-      product.featuredImages = payload.featuredImages
-        .map((img) => toStringOrEmpty(img))
-        .filter(Boolean);
     }
     if (payload?.status !== undefined) product.status = toStringOrEmpty(payload.status);
     if (payload?.currency !== undefined) product.currency = toUpper(payload.currency);
@@ -332,6 +409,16 @@ export const ProductService = {
       filter.name = new RegExp(String(query.name).trim(), "i");
     }
 
+    const filterUserId = toStringOrEmpty(query?.user_id);
+    if (filterUserId) {
+      filter.user_id = filterUserId;
+    }
+
+    const filterRole = toStringOrEmpty(query?.role);
+    if (filterRole) {
+      filter.role = filterRole;
+    }
+
     const [products, total] = await Promise.all([
       Product.find(filter)
         .sort({ createdAt: -1 })
@@ -383,40 +470,117 @@ export const ProductService = {
     };
   },
 
-  getPublicProductsByCategory: async (category_id) => {
+  getPublicProductsByCategory: async (category_id, { page = 1, limit = 10 } = {}) => {
     const normalizedCategoryId = toStringOrEmpty(category_id);
     if (!normalizedCategoryId) {
       throw new Error("category_id is required");
     }
 
-    const products = await Product.find({
+    await validateCategoryExists(normalizedCategoryId);
+
+    const parsedPage = Math.max(1, parseInt(page, 10) || 1);
+    const parsedLimit = Math.min(100, Math.max(1, parseInt(limit, 10) || 10));
+    const skip = (parsedPage - 1) * parsedLimit;
+
+    const filter = {
       category_id: normalizedCategoryId,
       $or: [{ sub_category_id: "" }, { sub_category_id: { $exists: false } }],
-    })
-      .sort({ createdAt: -1 })
-      .lean()
-      .exec();
+    };
 
-    return products.map(mapProduct);
+    const [categoryDoc, products, total] = await Promise.all([
+      Category.findOne({ category_id: normalizedCategoryId })
+        .select("category_id name description category_image -_id")
+        .lean()
+        .exec(),
+      Product.find(filter).sort({ createdAt: -1 }).skip(skip).limit(parsedLimit).lean().exec(),
+      Product.countDocuments(filter),
+    ]);
+
+    const category = mapPublicCategory(categoryDoc);
+
+    return {
+      products: products.map((product) => ({
+        ...mapProduct(product),
+        category_name: category.name,
+        sub_category_name: null,
+      })),
+      category,
+      sub_category: null,
+      pagination: {
+        total,
+        page: parsedPage,
+        limit: parsedLimit,
+        totalPages: Math.ceil(total / parsedLimit),
+        hasNextPage: parsedPage < Math.ceil(total / parsedLimit),
+        hasPrevPage: parsedPage > 1,
+      },
+    };
   },
 
-  getPublicProductsBySubCategory: async (sub_category_id) => {
+  getPublicProductsBySubCategory: async (
+    { category_id, sub_category_id },
+    { page = 1, limit = 10 } = {}
+  ) => {
+    const normalizedCategoryId = toStringOrEmpty(category_id);
     const normalizedSubCategoryId = toStringOrEmpty(sub_category_id);
+
+    if (!normalizedCategoryId) {
+      throw new Error("category_id is required");
+    }
     if (!normalizedSubCategoryId) {
       throw new Error("sub_category_id is required");
     }
 
-    const products = await Product.find({
-      sub_category_id: normalizedSubCategoryId,
-    })
-      .sort({ createdAt: -1 })
-      .lean()
-      .exec();
+    await validateCategoryAndSubCategory(normalizedCategoryId, normalizedSubCategoryId);
 
-    return products.map(mapProduct);
+    const parsedPage = Math.max(1, parseInt(page, 10) || 1);
+    const parsedLimit = Math.min(100, Math.max(1, parseInt(limit, 10) || 10));
+    const skip = (parsedPage - 1) * parsedLimit;
+
+    const filter = {
+      category_id: normalizedCategoryId,
+      sub_category_id: normalizedSubCategoryId,
+    };
+
+    const [categoryDoc, subCategoryDoc, products, total] = await Promise.all([
+      Category.findOne({ category_id: normalizedCategoryId })
+        .select("category_id name description category_image -_id")
+        .lean()
+        .exec(),
+      SubCategory.findOne({
+        sub_category_id: normalizedSubCategoryId,
+        category_id: normalizedCategoryId,
+      })
+        .select("sub_category_id category_id name description sub_category_image -_id")
+        .lean()
+        .exec(),
+      Product.find(filter).sort({ createdAt: -1 }).skip(skip).limit(parsedLimit).lean().exec(),
+      Product.countDocuments(filter),
+    ]);
+
+    const category = mapPublicCategory(categoryDoc);
+    const sub_category = mapPublicSubCategory(subCategoryDoc);
+
+    return {
+      products: products.map((product) => ({
+        ...mapProduct(product),
+        category_name: category.name,
+        sub_category_name: sub_category.name,
+      })),
+      category,
+      sub_category,
+      pagination: {
+        total,
+        page: parsedPage,
+        limit: parsedLimit,
+        totalPages: Math.ceil(total / parsedLimit),
+        hasNextPage: parsedPage < Math.ceil(total / parsedLimit),
+        hasPrevPage: parsedPage > 1,
+      },
+    };
   },
 
-  deleteProduct: async (product_id) => {
+  deleteProduct: async (product_id, actor) => {
     if (!product_id) {
       throw new Error("product_id is required");
     }
@@ -427,6 +591,8 @@ export const ProductService = {
     if (!product) {
       throw new Error("Product not found");
     }
+
+    assertCanModifyProduct(product, actor);
 
     await Product.deleteOne({ product_id: normalizedProductId });
 

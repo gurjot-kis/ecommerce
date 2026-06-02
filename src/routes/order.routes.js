@@ -38,7 +38,7 @@ router.patch(
 router.get(
   "/admin/orders",
   authMiddleware,
-  authorizeRoles(ROLES.SUPER_ADMIN),
+  authorizeRoles(ROLES.SUPER_ADMIN, ROLES.VENDOR),
   OrderController.listAdminOrders
 );
 

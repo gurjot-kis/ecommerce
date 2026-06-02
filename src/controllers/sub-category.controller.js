@@ -41,8 +41,8 @@ export const SubCategoryController = {
 
   getSubCategories: async (req, res) => {
     try {
-      const { page, limit } = req.query;
-      const { subCategories, pagination } = await SubCategoryService.getSubCategories({ page, limit });
+      const { page, limit, name } = req.query;
+      const { subCategories, pagination } = await SubCategoryService.getSubCategories({ page, limit, name });
       return res.status(200).json({
         success: true,
         code: 200,
@@ -63,8 +63,8 @@ export const SubCategoryController = {
         return sendError(res, 400, "category_id is required");
       }
 
-      const { page, limit } = req.query;
-      const { subCategories, pagination } = await SubCategoryService.getSubCategories({ category_id, page, limit });
+      const { page, limit, name } = req.query;
+      const { subCategories, pagination } = await SubCategoryService.getSubCategories({ category_id, page, limit, name });
       return res.status(200).json({
         success: true,
         code: 200,

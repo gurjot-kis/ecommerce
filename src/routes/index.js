@@ -10,6 +10,8 @@ import cartRoutes from './cart.routes.js';
 import addressRoutes from './address.routes.js';
 import orderRoutes from './order.routes.js';
 import bannerRoutes from './banner.routes.js';
+import cartSettingsRoutes from './cart-settings.routes.js';
+import vendorRoutes from './vendor/index.js';
 
 const router = express.Router();
 
@@ -30,5 +32,7 @@ router.use(cartRoutes);
 router.use(addressRoutes);
 router.use(orderRoutes);
 router.use(bannerRoutes);
+router.use(cartSettingsRoutes);
+router.use('/vendor', vendorRoutes);
 
 export default router;

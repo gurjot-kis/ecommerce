@@ -1,4 +1,5 @@
 import { OrderService } from "../services/order.service.js";
+import { ROLES } from "../middlewares/role.middleware.js";
 
 const sendError = (res, code, message) => {
   return res.status(code).json({
@@ -89,11 +90,13 @@ export const OrderController = {
   listAdminOrders: async (req, res) => {
     try {
       const { status, search, page, limit } = req.query || {};
+      const query = { status, search, page, limit, user_id: req.query?.user_id, role: req.query?.role };
+      if (req.user?.role === ROLES.VENDOR) {
+        query.user_id = req.user.user_id;
+        query.role = ROLES.VENDOR;
+      }
       const { orders, pagination } = await OrderService.listAdminOrders({
-        status,
-        search,
-        page,
-        limit,
+        ...query,
       });
       return res.status(200).json({
         success: true,

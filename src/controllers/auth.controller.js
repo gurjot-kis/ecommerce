@@ -1,5 +1,12 @@
 import { AuthService } from "../services/auth.service.js";
 import { addToBlacklist } from "../utils/token-blacklist.js";
+import { ACCOUNT_DEACTIVATED_MESSAGE } from "../utils/user-status.js";
+
+const authErrorStatus = (message) => {
+  if (message === "Invalid credentials") return 401;
+  if (message === ACCOUNT_DEACTIVATED_MESSAGE) return 403;
+  return 400;
+};
 
 const buildFailureResponse = (res, code, message) => {
   res.status(code).json({
@@ -54,8 +61,7 @@ export const AuthController = {
       });
     } catch (err) {
       const message = err?.message || "Login failed";
-      const statusCode = message === "Invalid credentials" ? 401 : 400;
-      return buildFailureResponse(res, statusCode, message);
+      return buildFailureResponse(res, authErrorStatus(message), message);
     }
   },
   changePassword: async (req, res) => {
@@ -166,7 +172,8 @@ export const AuthController = {
     } catch (err) {
       const message = err?.message || "Login failed";
       const statusCode =
-        message === "Invalid credentials" ? 401
+        message === ACCOUNT_DEACTIVATED_MESSAGE ? 403
+        : message === "Invalid credentials" ? 401
         : message === "OTP has expired" ? 410
         : 400;
       return buildFailureResponse(res, statusCode, message);

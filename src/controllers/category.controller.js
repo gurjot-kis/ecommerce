@@ -37,8 +37,8 @@ export const CategoryController = {
 
   getCategories: async (req, res) => {
     try {
-      const { page, limit } = req.query;
-      const { categories, pagination } = await CategoryService.getCategories({ page, limit });
+      const { page, limit, name } = req.query;
+      const { categories, pagination } = await CategoryService.getCategories({ page, limit, name });
       return res.status(200).json({
         success: true,
         code: 200,

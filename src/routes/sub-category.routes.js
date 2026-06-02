@@ -16,19 +16,19 @@ router.post(
 router.get(
   "/sub-categories",
   authMiddleware,
-  authorizeRoles(ROLES.SUPER_ADMIN, ROLES.USER),
+  authorizeRoles(ROLES.SUPER_ADMIN, ROLES.USER, ROLES.VENDOR),
   SubCategoryController.getSubCategories
 );
 router.get(
   "/sub-categories/category/:category_id",
   authMiddleware,
-  authorizeRoles(ROLES.SUPER_ADMIN, ROLES.USER),
+  authorizeRoles(ROLES.SUPER_ADMIN, ROLES.USER, ROLES.VENDOR),
   SubCategoryController.getSubCategoriesByCategoryId
 );
 router.get(
   "/sub-categories/:sub_category_id",
   authMiddleware,
-  authorizeRoles(ROLES.SUPER_ADMIN, ROLES.USER),
+  authorizeRoles(ROLES.SUPER_ADMIN, ROLES.USER, ROLES.VENDOR),
   SubCategoryController.getSubCategoryById
 );
 router.put(

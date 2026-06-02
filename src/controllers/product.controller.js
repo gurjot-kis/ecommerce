@@ -1,4 +1,65 @@
-import { ProductService } from "../services/product.service.js";
+import {
+  ProductService,
+  normalizeFeaturedImagesInput,
+} from "../services/product.service.js";
+import { ROLES } from "../middlewares/role.middleware.js";
+
+const applyProductUploads = (body, files) => {
+  const next = { ...(body || {}) };
+  const mainImageFile = files?.mainImage?.[0];
+  const featuredImageFiles = files?.featuredImages || [];
+
+  if (mainImageFile) {
+    next.mainImage = `/uploads/products/${mainImageFile.filename}`;
+  }
+
+  const uploadedFeatured = featuredImageFiles.map((f) => `/uploads/products/${f.filename}`);
+  const existingFeatured = normalizeFeaturedImagesInput(next.featuredImages);
+
+  if (uploadedFeatured.length > 0) {
+    next.featuredImages = [...(existingFeatured || []), ...uploadedFeatured];
+  } else if (next.featuredImages !== undefined) {
+    const normalized = normalizeFeaturedImagesInput(next.featuredImages);
+    if (normalized === undefined) {
+      delete next.featuredImages;
+    } else {
+      next.featuredImages = normalized;
+    }
+  }
+
+  return next;
+};
+
+const attachCreator = (body, user) => ({
+  ...body,
+  role: user?.role,
+  user_id: user?.user_id,
+});
+
+/**
+ * List products using query params from the client.
+ * Frontend should pass user_id (and role) from the auth token / session.
+ * Vendors may only query their own user_id.
+ */
+const buildProductListQuery = (query, user) => {
+  const next = { ...(query || {}) };
+  const queryUserId = String(next.user_id || "").trim();
+
+  if (user?.role === ROLES.VENDOR) {
+    if (!queryUserId) {
+      throw new Error("user_id is required");
+    }
+    if (queryUserId !== String(user.user_id)) {
+      throw new Error("Forbidden: user_id must match the authenticated vendor");
+    }
+    if (!next.role) {
+      next.role = ROLES.VENDOR;
+    }
+    return next;
+  }
+
+  return next;
+};
 
 const sendError = (res, code, message) => {
   return res.status(code).json({
@@ -17,18 +78,7 @@ const conflictMessages = new Set([
 export const ProductController = {
   createProduct: async (req, res) => {
     try {
-      const body = req.body || {};
-      const mainImageFile = req.files?.mainImage?.[0];
-      const featuredImageFiles = req.files?.featuredImages || [];
-
-      if (mainImageFile) {
-        body.mainImage = `/uploads/products/${mainImageFile.filename}`;
-      }
-
-      if (featuredImageFiles.length > 0) {
-        body.featuredImages = featuredImageFiles.map((f) => `/uploads/products/${f.filename}`);
-      }
-
+      const body = attachCreator(applyProductUploads(req.body, req.files), req.user);
       const data = await ProductService.createProduct(body);
       return res.status(200).json({
         success: true,
@@ -58,19 +108,8 @@ export const ProductController = {
   updateProduct: async (req, res) => {
     try {
       const { product_id } = req.params || {};
-      const body = req.body || {};
-      const mainImageFile = req.files?.mainImage?.[0];
-      const featuredImageFiles = req.files?.featuredImages || [];
-
-      if (mainImageFile) {
-        body.mainImage = `/uploads/products/${mainImageFile.filename}`;
-      }
-
-      if (featuredImageFiles.length > 0) {
-        body.featuredImages = featuredImageFiles.map((f) => `/uploads/products/${f.filename}`);
-      }
-
-      const data = await ProductService.updateProduct(product_id, body);
+      const body = applyProductUploads(req.body, req.files);
+      const data = await ProductService.updateProduct(product_id, body, req.user);
 
       return res.status(200).json({
         success: true,
@@ -80,6 +119,10 @@ export const ProductController = {
       });
     } catch (err) {
       const message = err?.message || "Product update failed";
+
+      if (message.startsWith("Forbidden:")) {
+        return sendError(res, 403, message);
+      }
 
       if (
         message === "Product not found" ||
@@ -100,23 +143,13 @@ export const ProductController = {
   editProduct: async (req, res) => {
     try {
       const { product_id } = req.params || {};
-      const body = req.body || {};
-      const mainImageFile = req.files?.mainImage?.[0];
-      const featuredImageFiles = req.files?.featuredImages || [];
-
-      if (mainImageFile) {
-        body.mainImage = `/uploads/products/${mainImageFile.filename}`;
-      }
-
-      if (featuredImageFiles.length > 0) {
-        body.featuredImages = featuredImageFiles.map((f) => `/uploads/products/${f.filename}`);
-      }
+      const body = applyProductUploads(req.body, req.files);
 
       if (Object.keys(body).length === 0) {
         return sendError(res, 400, "At least one field is required to update");
       }
 
-      const data = await ProductService.updateProduct(product_id, body);
+      const data = await ProductService.updateProduct(product_id, body, req.user);
 
       return res.status(200).json({
         success: true,
@@ -126,6 +159,10 @@ export const ProductController = {
       });
     } catch (err) {
       const message = err?.message || "Product update failed";
+
+      if (message.startsWith("Forbidden:")) {
+        return sendError(res, 403, message);
+      }
 
       if (
         message === "Product not found" ||
@@ -145,7 +182,8 @@ export const ProductController = {
 
   getProducts: async (req, res) => {
     try {
-      const { products, pagination } = await ProductService.getProducts(req.query || {});
+      const query = buildProductListQuery(req.query, req.user);
+      const { products, pagination } = await ProductService.getProducts(query);
       return res.status(200).json({
         success: true,
         code: 200,
@@ -153,8 +191,18 @@ export const ProductController = {
         data: products,
         pagination,
       });
-    } catch (_err) {
-      return sendError(res, 500, "Unable to fetch products");
+    } catch (err) {
+      const message = err?.message || "Unable to fetch products";
+
+      if (message.startsWith("Forbidden:")) {
+        return sendError(res, 403, message);
+      }
+
+      if (message === "user_id is required") {
+        return sendError(res, 400, message);
+      }
+
+      return sendError(res, 500, message);
     }
   },
 
@@ -162,6 +210,11 @@ export const ProductController = {
     try {
       const { product_id } = req.params || {};
       const data = await ProductService.getProductById(product_id);
+
+      if (req.user?.role === ROLES.VENDOR && data.user_id !== req.user.user_id) {
+        return sendError(res, 403, "Forbidden: you can only view your own products");
+      }
+
       return res.status(200).json({
         success: true,
         code: 200,
@@ -182,7 +235,7 @@ export const ProductController = {
   deleteProduct: async (req, res) => {
     try {
       const { product_id } = req.params || {};
-      const data = await ProductService.deleteProduct(product_id);
+      const data = await ProductService.deleteProduct(product_id, req.user);
       return res.status(200).json({
         success: true,
         code: 200,
@@ -191,6 +244,10 @@ export const ProductController = {
       });
     } catch (err) {
       const message = err?.message || "Product deletion failed";
+
+      if (message.startsWith("Forbidden:")) {
+        return sendError(res, 403, message);
+      }
 
       if (message === "Product not found") {
         return sendError(res, 404, message);
@@ -203,41 +260,70 @@ export const ProductController = {
   getPublicProductsByCategory: async (req, res) => {
     try {
       const { category_id } = req.params || {};
+      const { page, limit } = req.query || {};
+
       if (!category_id) {
         return sendError(res, 400, "category_id is required");
       }
 
-      const data = await ProductService.getPublicProductsByCategory(category_id);
+      const { products, category, sub_category, pagination } =
+        await ProductService.getPublicProductsByCategory(category_id, { page, limit });
+
       return res.status(200).json({
         success: true,
         code: 200,
         message: "Category products fetched successfully",
-        data,
+        data: products,
+        category,
+        sub_category,
+        pagination,
       });
-    } catch (_err) {
+    } catch (err) {
+      const message = err?.message || "Unable to fetch category products";
+
+      if (message === "Category not found") {
+        return sendError(res, 404, message);
+      }
+
       return sendError(res, 500, "Unable to fetch category products");
     }
   },
 
   getPublicProductsBySubCategory: async (req, res) => {
     try {
-      const { sub_category_id } = req.params || {};
+      const { category_id, sub_category_id } = req.params || {};
+      const { page, limit } = req.query || {};
+
+      if (!category_id) {
+        return sendError(res, 400, "category_id is required");
+      }
 
       if (!sub_category_id) {
         return sendError(res, 400, "sub_category_id is required");
       }
 
-      const data = await ProductService.getPublicProductsBySubCategory(
-        sub_category_id
-      );
+      const { products, category, sub_category, pagination } =
+        await ProductService.getPublicProductsBySubCategory(
+          { category_id, sub_category_id },
+          { page, limit }
+        );
 
       return res.status(200).json({
         success: true,
         code: 200,
         message: "Sub-category products fetched successfully",
-        data,
+        data: products,
+        category,
+        sub_category,
+        pagination,
       });
-    } catch (_err) {
+    } catch (err) {
+      const message = err?.message || "Unable to fetch sub-category products";
+
+      if (message === "Category not found" || message === "Sub-category not found in this category") {
+        return sendError(res, 404, message);
+      }
+
       return sendError(res, 500, "Unable to fetch sub-category products");
     }
   },

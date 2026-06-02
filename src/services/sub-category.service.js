@@ -45,11 +45,15 @@ export const SubCategoryService = {
     };
   },
 
-  getSubCategories: async ({ category_id, page = 1, limit = 10 } = {}) => {
+  getSubCategories: async ({ category_id, page = 1, limit = 10, name } = {}) => {
     const filter = {};
 
     if (category_id) {
       filter.category_id = String(category_id).trim();
+    }
+
+    if (name && String(name).trim()) {
+      filter.name = new RegExp(String(name).trim(), "i");
     }
 
     const parsedPage = Math.max(1, parseInt(page, 10) || 1);

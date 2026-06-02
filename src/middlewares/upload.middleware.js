@@ -1,6 +1,11 @@
 import multer from "multer";
 import path from "path";
 import crypto from "crypto";
+import { fileURLToPath } from "url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const UPLOADS_ROOT = path.join(__dirname, "../uploads");
 
 const ALLOWED_MIME_TYPES = ["image/jpeg", "image/jpg", "image/png", "image/webp", "image/gif"];
 
@@ -12,10 +17,10 @@ const fileFilter = (_req, file, cb) => {
   }
 };
 
-const createStorage = (destinationPath) =>
+const createStorage = (subfolder) =>
   multer.diskStorage({
     destination: (_req, _file, cb) => {
-      cb(null, destinationPath);
+      cb(null, path.join(UPLOADS_ROOT, subfolder));
     },
     filename: (_req, file, cb) => {
       const uniqueSuffix = crypto.randomUUID();
@@ -25,7 +30,7 @@ const createStorage = (destinationPath) =>
   });
 
 export const uploadProductImages = multer({
-  storage: createStorage("src/uploads/products"),
+  storage: createStorage("products"),
   fileFilter,
   limits: { fileSize: 5 * 1024 * 1024 }, // 5 MB per file
 }).fields([
@@ -34,25 +39,32 @@ export const uploadProductImages = multer({
 ]);
 
 export const uploadCategoryImage = multer({
-  storage: createStorage("src/uploads/categories"),
+  storage: createStorage("categories"),
   fileFilter,
   limits: { fileSize: 5 * 1024 * 1024 }, // 5 MB per file
 }).single("category_image");
 
 export const uploadSubCategoryImage = multer({
-  storage: createStorage("src/uploads/sub-categories"),
+  storage: createStorage("sub-categories"),
   fileFilter,
   limits: { fileSize: 5 * 1024 * 1024 }, // 5 MB per file
 }).single("sub_category_image");
 
 export const uploadAdminProfilePicture = multer({
-  storage: createStorage("src/uploads/admin"),
+  storage: createStorage("admin"),
   fileFilter,
   limits: { fileSize: 5 * 1024 * 1024 }, // 5 MB per file
 }).single("profile_picture");
 
 export const uploadBannerImage = multer({
-  storage: createStorage("src/uploads/banners"),
+  storage: createStorage("banners"),
   fileFilter,
   limits: { fileSize: 5 * 1024 * 1024 }, // 5 MB per file
 }).single("banner_image");
+
+
+export const uploadWarehouseImage = multer({
+  storage: createStorage("warehouses"),
+  fileFilter,
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5 MB per file
+}).single("warehouse_image");

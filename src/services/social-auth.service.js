@@ -1,5 +1,6 @@
 import jwt from "jsonwebtoken";
 import User from "../models/user.model.js";
+import { assertUserCanLogin, mapUserStatus } from "../utils/user-status.js";
 
 const JWT_SECRET = process.env.JWT_SECRET || "dev-secret";
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || "365d";
@@ -18,6 +19,7 @@ const buildAuthResponse = (user, token) => ({
   name: user.name,
   email: user.email,
   role: user.role || "User",
+  status: mapUserStatus(user.status),
   authProvider: user.authProvider,
   token,
 });
@@ -56,11 +58,14 @@ export const SocialAuthService = {
         email: normalizedEmail,
         name: normalizedName,
         role: "User",
+        status: 1,
         [socialField]: String(socialId).trim(),
         authProvider: normalizedProvider,
         passwordHash: "",
       });
     }
+
+    assertUserCanLogin(user);
 
     const token = signAuthToken(user);
     return buildAuthResponse(user, token);

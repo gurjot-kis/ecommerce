@@ -1,5 +1,18 @@
 import Cart from "../models/cart.model.js";
 import Product from "../models/product.model.js";
+import {
+  getActiveCartSettings,
+  computeCartSummary,
+} from "./cart-settings.service.js";
+
+class InsufficientStockError extends Error {
+  constructor(available, requested) {
+    super(`Only ${available} unit(s) are available in stock`);
+    this.availableQuantity = available;
+    this.requestedQuantity = requested;
+    this.name = "InsufficientStockError";
+  }
+}
 
 const normalizeId = (value) => String(value || "").trim().replace(/^:/, "");
 
@@ -19,11 +32,38 @@ const getProductOrThrow = async (product_id) => {
   return product;
 };
 
+/** Max units allowed in cart for this product (integer, >= 0). */
+const getAvailableStock = (product) => {
+  const raw = Number(product?.stock ?? 0);
+  if (!Number.isFinite(raw) || raw < 0) {
+    return 0;
+  }
+  return Math.floor(raw);
+};
+
+/**
+ * Ensures desired cart line quantity does not exceed in-stock quantity.
+ * @throws Error with user-facing message when over limit or out of stock
+ */
+const assertQuantityWithinStock = (product, desiredQuantity) => {
+  const stock = getAvailableStock(product);
+  const desired = Number(desiredQuantity || 0);
+
+  if (stock <= 0) {
+    throw new Error("This product is out of stock");
+  }
+
+  if (desired > stock) {
+    throw new InsufficientStockError(stock, desired);
+  }
+};
+
 const mapCartItem = (item, product) => {
   const safePrice = Number(product?.price || 0);
   const safeSellingPrice = Number(product?.sellingPrice || 0);
   const safeQuantity = Number(item.quantity || 0);
   const itemTotal = safeSellingPrice * safeQuantity;
+  const priceTotal = safePrice * safeQuantity;
 
   return {
     product_id: item.product_id,
@@ -41,6 +81,7 @@ const mapCartItem = (item, product) => {
         }
       : null,
     itemTotal,
+    priceTotal,
     createdAt: item.createdAt,
     updatedAt: item.updatedAt,
   };
@@ -67,8 +108,12 @@ export const CartService = {
       product_id: normalizedProductId,
     }).exec();
 
+    const currentInCart = existing ? Number(existing.quantity || 0) : 0;
+    const desiredTotal = currentInCart + addQuantity;
+    assertQuantityWithinStock(product, desiredTotal);
+
     if (existing) {
-      existing.quantity += addQuantity;
+      existing.quantity = desiredTotal;
       await existing.save();
       return mapCartItem(existing, product);
     }
@@ -106,6 +151,8 @@ export const CartService = {
     if (!cartItem) {
       throw new Error("Cart item not found");
     }
+
+    assertQuantityWithinStock(product, nextQuantity);
 
     cartItem.quantity = nextQuantity;
     await cartItem.save();
@@ -150,11 +197,13 @@ export const CartService = {
       .lean()
       .exec();
 
+    const settings = await getActiveCartSettings();
+
     if (cartItems.length === 0) {
       return {
         items: [],
         totalItems: 0,
-        grandTotal: 0,
+        summary: computeCartSummary([], settings),
       };
     }
 
@@ -164,12 +213,12 @@ export const CartService = {
 
     const items = cartItems.map((item) => mapCartItem(item, productMap.get(item.product_id)));
     const totalItems = items.reduce((acc, item) => acc + item.quantity, 0);
-    const grandTotal = items.reduce((acc, item) => acc + item.itemTotal, 0);
+    const summary = computeCartSummary(items, settings);
 
     return {
       items,
       totalItems,
-      grandTotal,
+      summary,
     };
   },
 };

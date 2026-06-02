@@ -1,4 +1,5 @@
 import { SocialAuthService } from "../services/social-auth.service.js";
+import { ACCOUNT_DEACTIVATED_MESSAGE } from "../utils/user-status.js";
 
 const sendError = (res, code, message) =>
   res.status(code).json({ success: false, code, message, data: null });
@@ -16,7 +17,8 @@ export const SocialAuthController = {
       });
     } catch (err) {
       const message = err?.message || "Social authentication failed";
-      return sendError(res, 400, message);
+      const statusCode = message === ACCOUNT_DEACTIVATED_MESSAGE ? 403 : 400;
+      return sendError(res, statusCode, message);
     }
   },
 };

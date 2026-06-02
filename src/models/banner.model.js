@@ -29,6 +29,12 @@ const BannerSchema = new mongoose.Schema(
       required: true,
       trim: true,
     },
+    upload_area: {
+      type: String,
+      enum: ["website", "app"],
+      default: "website",
+      trim: true,
+    },
     status: {
       type: Number,
       enum: [0, 1],

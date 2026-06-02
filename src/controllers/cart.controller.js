@@ -29,6 +29,18 @@ export const CartController = {
         return sendError(res, 404, message);
       }
 
+      if (err?.name === "InsufficientStockError") {
+        return res.status(400).json({
+          success: false,
+          code: 400,
+          message: err.message,
+          data: {
+            available_quantity: err.availableQuantity,
+            requested_quantity: err.requestedQuantity,
+          },
+        });
+      }
+
       return sendError(res, 400, message);
     }
   },
@@ -51,6 +63,18 @@ export const CartController = {
 
       if (message === "Product not found" || message === "Cart item not found") {
         return sendError(res, 404, message);
+      }
+
+      if (err?.name === "InsufficientStockError") {
+        return res.status(400).json({
+          success: false,
+          code: 400,
+          message: err.message,
+          data: {
+            available_quantity: err.availableQuantity,
+            requested_quantity: err.requestedQuantity,
+          },
+        });
       }
 
       return sendError(res, 400, message);

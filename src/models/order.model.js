@@ -28,6 +28,8 @@ const ShippingAddressSchema = new mongoose.Schema(
     state: { type: String, required: true, trim: true },
     country: { type: String, required: true, trim: true },
     pincode: { type: String, required: true, trim: true },
+    latitude: { type: Number, default: null },
+    longitude: { type: Number, default: null },
   },
   { _id: false }
 );
@@ -63,6 +65,41 @@ const OrderSchema = new mongoose.Schema(
     grandTotal: {
       type: Number,
       required: true,
+      min: 0,
+    },
+    items_total: {
+      type: Number,
+      required: true,
+      min: 0,
+    },
+    price_total: {
+      type: Number,
+      required: true,
+      min: 0,
+    },
+    discount: {
+      type: Number,
+      required: true,
+      min: 0,
+      default: 0,
+    },
+    handling_charge: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    delivery_charge: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    delivery_waived: {
+      type: Boolean,
+      default: false,
+    },
+    small_cart_charge: {
+      type: Number,
+      default: 0,
       min: 0,
     },
     paymentMethod: {

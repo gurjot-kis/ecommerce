@@ -65,12 +65,13 @@ export const BannerController = {
 
   listBanners: async (req, res) => {
     try {
-      const { page, limit, search, status } = req.query || {};
+      const { page, limit, search, status, upload_area } = req.query || {};
       const { items, pagination } = await BannerService.listBanners({
         page,
         limit,
         search,
         status,
+        upload_area,
       });
       return res.status(200).json({
         success: true,
@@ -81,7 +82,12 @@ export const BannerController = {
       });
     } catch (err) {
       const message = err?.message || "Unable to fetch banners";
-      if (message === "status must be 0 or 1" || message === "status is required") {
+      if (
+        message === "status must be 0 or 1" ||
+        message === "status is required" ||
+        message === "upload_area must be website or app" ||
+        message === "upload_area is required"
+      ) {
         return sendError(res, 400, message);
       }
       return sendError(res, 500, "Unable to fetch banners");
@@ -91,11 +97,12 @@ export const BannerController = {
   /** Public: banners with status = 1 only */
   getBannerImg: async (req, res) => {
     try {
-      const { page, limit, search } = req.query || {};
+      const { page, limit, search, upload_area } = req.query || {};
       const { items, pagination } = await BannerService.listBannerImg({
         page,
         limit,
         search,
+        upload_area,
       });
       return res.status(200).json({
         success: true,
@@ -104,7 +111,11 @@ export const BannerController = {
         data: items,
         pagination,
       });
-    } catch (_err) {
+    } catch (err) {
+      const message = err?.message || "Unable to fetch banners";
+      if (message === "upload_area must be website or app") {
+        return sendError(res, 400, message);
+      }
       return sendError(res, 500, "Unable to fetch banners");
     }
   },

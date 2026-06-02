@@ -1,6 +1,7 @@
 export const ROLES = {
   SUPER_ADMIN: "SuperAdmin",
   USER: "User",
+  VENDOR: "Vendor",
 };
 
 export const authorizeRoles = (...allowedRoles) => {

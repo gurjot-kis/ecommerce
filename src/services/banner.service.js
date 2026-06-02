@@ -25,12 +25,30 @@ const parseStatus = (value, { required = false, defaultValue = 1 } = {}) => {
   throw new Error("status must be 0 or 1");
 };
 
-const selectPublicFields = "banner_id title description banner_image order_url status -_id";
+const UPLOAD_AREAS = ["website", "app"];
+
+const parseUploadArea = (value, { required = false, defaultValue = "website" } = {}) => {
+  if (value === undefined || value === null || value === "") {
+    if (required) {
+      throw new Error("upload_area is required");
+    }
+    return defaultValue;
+  }
+  const normalized = normalizeString(value).toLowerCase();
+  if (UPLOAD_AREAS.includes(normalized)) {
+    return normalized;
+  }
+  throw new Error("upload_area must be website or app");
+};
+
+const selectPublicFields =
+  "banner_id title description banner_image order_url upload_area status -_id";
 
 export const BannerService = {
-  createBanner: async ({ title, description, banner_image, order_url, status }) => {
+  createBanner: async ({ title, description, banner_image, order_url, upload_area, status }) => {
     const normalizedTitle = normalizeString(title);
     const normalizedOrderUrl = normalizeString(order_url);
+    const normalizedUploadArea = parseUploadArea(upload_area, { required: true });
     const normalizedStatus = parseStatus(status, { defaultValue: 1 });
 
     if (!normalizedTitle) {
@@ -45,6 +63,7 @@ export const BannerService = {
       description: description !== undefined ? normalizeString(description) : "",
       banner_image: banner_image ? normalizeString(banner_image) : "",
       order_url: normalizedOrderUrl,
+      upload_area: normalizedUploadArea,
       status: normalizedStatus,
     });
 
@@ -54,11 +73,18 @@ export const BannerService = {
       description: doc.description,
       banner_image: doc.banner_image,
       order_url: doc.order_url,
+      upload_area: doc.upload_area,
       status: doc.status,
     };
   },
 
-  listBanners: async ({ page = 1, limit = 10, search = "", status: statusFilter } = {}) => {
+  listBanners: async ({
+    page = 1,
+    limit = 10,
+    search = "",
+    status: statusFilter,
+    upload_area: uploadAreaFilter,
+  } = {}) => {
     const parsedPage = Math.max(1, parseInt(page, 10) || 1);
     const parsedLimit = Math.min(100, Math.max(1, parseInt(limit, 10) || 10));
     const skip = (parsedPage - 1) * parsedLimit;
@@ -68,6 +94,14 @@ export const BannerService = {
 
     if (statusFilter !== undefined && statusFilter !== null && normalizeString(statusFilter) !== "") {
       filter.status = parseStatus(statusFilter, { required: true });
+    }
+
+    if (
+      uploadAreaFilter !== undefined &&
+      uploadAreaFilter !== null &&
+      normalizeString(uploadAreaFilter) !== ""
+    ) {
+      filter.upload_area = parseUploadArea(uploadAreaFilter, { required: true });
     }
 
     if (normalizedSearch) {
@@ -93,6 +127,7 @@ export const BannerService = {
 
     const normalizedItems = items.map((row) => ({
       ...row,
+      upload_area: row.upload_area === "app" ? "app" : "website",
       status: row.status === 0 ? 0 : 1,
     }));
 
@@ -110,13 +145,23 @@ export const BannerService = {
   },
 
   /** Active banners only (status = 1). Public storefront use. */
-  listBannerImg: async ({ page = 1, limit = 10, search = "" } = {}) => {
+  listBannerImg: async ({ page = 1, limit = 10, search = "", upload_area: uploadAreaFilter } = {}) => {
     const parsedPage = Math.max(1, parseInt(page, 10) || 1);
     const parsedLimit = Math.min(100, Math.max(1, parseInt(limit, 10) || 10));
     const skip = (parsedPage - 1) * parsedLimit;
 
     const filter = { status: 1 };
     const normalizedSearch = normalizeString(search);
+
+    // No query param → app banners; ?upload_area=website|app → that area
+    const hasUploadAreaParam =
+      uploadAreaFilter !== undefined &&
+      uploadAreaFilter !== null &&
+      normalizeString(uploadAreaFilter) !== "";
+
+    filter.upload_area = hasUploadAreaParam
+      ? parseUploadArea(uploadAreaFilter, { required: true })
+      : "app";
 
     if (normalizedSearch) {
       const searchRegex = new RegExp(escapeRegex(normalizedSearch), "i");
@@ -141,6 +186,7 @@ export const BannerService = {
 
     const normalizedItems = items.map((row) => ({
       ...row,
+      upload_area: row.upload_area === "app" ? "app" : "website",
       status: 1,
     }));
 
@@ -176,11 +222,20 @@ export const BannerService = {
 
     return {
       ...doc,
+      upload_area: doc.upload_area === "app" ? "app" : "website",
       status: doc.status === 0 ? 0 : 1,
     };
   },
 
-  updateBanner: async ({ banner_id, title, description, banner_image, order_url, status }) => {
+  updateBanner: async ({
+    banner_id,
+    title,
+    description,
+    banner_image,
+    order_url,
+    upload_area,
+    status,
+  }) => {
     const id = normalizeBannerId(banner_id);
     if (!id) {
       throw new Error("banner_id is required");
@@ -191,10 +246,13 @@ export const BannerService = {
       description !== undefined ||
       banner_image !== undefined ||
       order_url !== undefined ||
+      upload_area !== undefined ||
       status !== undefined;
 
     if (!hasAnyUpdate) {
-      throw new Error("At least one of title, description, banner_image, order_url, or status is required");
+      throw new Error(
+        "At least one of title, description, banner_image, order_url, upload_area, or status is required"
+      );
     }
 
     const doc = await Banner.findOne({
@@ -229,6 +287,10 @@ export const BannerService = {
       doc.order_url = u;
     }
 
+    if (upload_area !== undefined) {
+      doc.upload_area = parseUploadArea(upload_area, { required: true });
+    }
+
     if (status !== undefined) {
       doc.status = parseStatus(status, { required: true });
     }
@@ -241,6 +303,7 @@ export const BannerService = {
       description: doc.description,
       banner_image: doc.banner_image,
       order_url: doc.order_url,
+      upload_area: doc.upload_area,
       status: doc.status,
     };
   },

@@ -4,6 +4,28 @@ const normalizeString = (value) => String(value || "").trim();
 
 const normalizeId = (value) => normalizeString(value).replace(/^:/, "");
 
+const parseOptionalLatitude = (value) => {
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+  const n = typeof value === "number" ? value : parseFloat(String(value).trim());
+  if (!Number.isFinite(n) || n < -90 || n > 90) {
+    throw new Error("latitude must be a number between -90 and 90");
+  }
+  return n;
+};
+
+const parseOptionalLongitude = (value) => {
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+  const n = typeof value === "number" ? value : parseFloat(String(value).trim());
+  if (!Number.isFinite(n) || n < -180 || n > 180) {
+    throw new Error("longitude must be a number between -180 and 180");
+  }
+  return n;
+};
+
 const mapAddress = (address) => ({
   address_id: address.address_id,
   user_id: address.user_id,
@@ -17,6 +39,10 @@ const mapAddress = (address) => ({
   country: address.country,
   pincode: address.pincode,
   isDefault: Boolean(address.isDefault),
+  latitude:
+    address.latitude != null && Number.isFinite(address.latitude) ? address.latitude : null,
+  longitude:
+    address.longitude != null && Number.isFinite(address.longitude) ? address.longitude : null,
   createdAt: address.createdAt,
   updatedAt: address.updatedAt,
 });
@@ -68,6 +94,8 @@ export const AddressService = {
     country,
     pincode,
     isDefault,
+    latitude,
+    longitude,
   }) => {
     const normalizedUserId = normalizeId(user_id);
     if (!normalizedUserId) {
@@ -92,6 +120,8 @@ export const AddressService = {
       country: normalizeString(country),
       pincode: normalizeString(pincode),
       isDefault: Boolean(isDefault),
+      latitude: parseOptionalLatitude(latitude),
+      longitude: parseOptionalLongitude(longitude),
     });
 
     if (created.isDefault) {
@@ -114,6 +144,8 @@ export const AddressService = {
     country,
     pincode,
     isDefault,
+    latitude,
+    longitude,
   }) => {
     const normalizedUserId = normalizeId(user_id);
     const normalizedAddressId = normalizeId(address_id);
@@ -151,6 +183,13 @@ export const AddressService = {
     address.country = normalizeString(country);
     address.pincode = normalizeString(pincode);
     address.isDefault = Boolean(isDefault);
+
+    if (latitude !== undefined) {
+      address.latitude = parseOptionalLatitude(latitude);
+    }
+    if (longitude !== undefined) {
+      address.longitude = parseOptionalLongitude(longitude);
+    }
 
     await address.save();
 

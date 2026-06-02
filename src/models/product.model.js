@@ -99,6 +99,15 @@ const ProductSchema = new mongoose.Schema(
       required: true,
       min: 0,
     },
+    role: {
+      type: String,
+      enum: ["SuperAdmin", "User", "Vendor"],
+      index: true,
+    },
+    user_id: {
+      type: String,
+      index: true,
+    },
   },
   { timestamps: true }
 );

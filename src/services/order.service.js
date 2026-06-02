@@ -4,17 +4,105 @@ import Product from "../models/product.model.js";
 import Address from "../models/address.model.js";
 import User from "../models/user.model.js";
 import { sendEmail } from "../utils/email.js";
+import {
+  getActiveCartSettings,
+  computeCartSummary,
+} from "./cart-settings.service.js";
 
 const normalizeId = (value) => String(value || "").trim().replace(/^:/, "");
 const normalizeString = (value) => String(value || "").trim();
 
-const mapOrder = (order) => ({
+const mapShippingAddress = (shippingAddress) => {
+  if (!shippingAddress) {
+    return null;
+  }
+  return {
+    address_id: shippingAddress.address_id,
+    fullName: shippingAddress.fullName,
+    phone: shippingAddress.phone,
+    addressLine1: shippingAddress.addressLine1,
+    addressLine2: shippingAddress.addressLine2 || "",
+    landmark: shippingAddress.landmark || "",
+    city: shippingAddress.city,
+    state: shippingAddress.state,
+    country: shippingAddress.country,
+    pincode: shippingAddress.pincode,
+    latitude:
+      shippingAddress.latitude != null && Number.isFinite(shippingAddress.latitude)
+        ? shippingAddress.latitude
+        : null,
+    longitude:
+      shippingAddress.longitude != null && Number.isFinite(shippingAddress.longitude)
+        ? shippingAddress.longitude
+        : null,
+  };
+};
+
+const mapOrderSummaryFromStored = (order) => {
+  const summary = {
+    items_total: Number(order.items_total || 0),
+    price_total: Number(order.price_total || 0),
+    discount: Number(order.discount || 0),
+    grandTotal: Number(order.grandTotal || 0),
+  };
+
+  const handling = Number(order.handling_charge || 0);
+  if (handling > 0) {
+    summary.handling_charge = handling;
+  }
+
+  if (order.delivery_waived) {
+    summary.delivery_waived = true;
+  } else {
+    const delivery = Number(order.delivery_charge || 0);
+    if (delivery > 0) {
+      summary.delivery_charge = delivery;
+    }
+  }
+
+  const smallCart = Number(order.small_cart_charge || 0);
+  if (smallCart > 0) {
+    summary.small_cart_charge = smallCart;
+  }
+
+  return summary;
+};
+
+const hasStoredOrderPricing = (order) =>
+  order.items_total != null && order.price_total != null && order.discount != null;
+
+const buildOrderSummary = (order, settings) => {
+  if (hasStoredOrderPricing(order)) {
+    return mapOrderSummaryFromStored(order);
+  }
+
+  const items = order.items || [];
+  if (settings) {
+    return computeCartSummary(items, settings);
+  }
+
+  const items_total = items.reduce((acc, item) => acc + Number(item.itemTotal || 0), 0);
+  const price_total = items.reduce(
+    (acc, item) => acc + Number(item.price || 0) * Number(item.quantity || 0),
+    0
+  );
+
+  return {
+    items_total,
+    price_total,
+    discount: Math.max(0, price_total - items_total),
+    grandTotal: Number(order.grandTotal || items_total),
+  };
+};
+
+const mapOrder = (order, settings = null) => ({
   order_id: order.order_id,
   user_id: order.user_id,
   items: order.items || [],
-  shippingAddress: order.shippingAddress || null,
+  shippingAddress: mapShippingAddress(order.shippingAddress),
   totalItems: Number(order.totalItems || 0),
   grandTotal: Number(order.grandTotal || 0),
+  summary: buildOrderSummary(order, settings),
   paymentMethod: order.paymentMethod,
   paymentReceived: Number(order.paymentReceived || 0),
   status: order.status,
@@ -22,8 +110,8 @@ const mapOrder = (order) => ({
   updatedAt: order.updatedAt,
 });
 
-const withUserName = (order, userMap) => ({
-  ...mapOrder(order),
+const withUserName = (order, userMap, settings = null) => ({
+  ...mapOrder(order, settings),
   user_name: userMap.get(order.user_id) || null,
 });
 
@@ -137,7 +225,9 @@ export const OrderService = {
     });
 
     const totalItems = items.reduce((acc, item) => acc + item.quantity, 0);
-    const grandTotal = items.reduce((acc, item) => acc + item.itemTotal, 0);
+
+    const settings = await getActiveCartSettings();
+    const summary = computeCartSummary(items, settings);
 
     const order = await Order.create({
       user_id: normalizedUserId,
@@ -153,9 +243,22 @@ export const OrderService = {
         state: address.state,
         country: address.country,
         pincode: address.pincode,
+        latitude:
+          address.latitude != null && Number.isFinite(address.latitude) ? address.latitude : null,
+        longitude:
+          address.longitude != null && Number.isFinite(address.longitude)
+            ? address.longitude
+            : null,
       },
       totalItems,
-      grandTotal,
+      grandTotal: summary.grandTotal,
+      items_total: summary.items_total,
+      price_total: summary.price_total,
+      discount: summary.discount,
+      handling_charge: summary.handling_charge || 0,
+      delivery_charge: summary.delivery_charge || 0,
+      delivery_waived: Boolean(summary.delivery_waived),
+      small_cart_charge: summary.small_cart_charge || 0,
       paymentMethod: normalizeString(paymentMethod) || "COD",
       status: "placed",
     });
@@ -184,12 +287,12 @@ export const OrderService = {
       throw new Error("user_id is required");
     }
 
-    const orders = await Order.find({ user_id: normalizedUserId })
-      .sort({ createdAt: -1 })
-      .lean()
-      .exec();
+    const [orders, settings] = await Promise.all([
+      Order.find({ user_id: normalizedUserId }).sort({ createdAt: -1 }).lean().exec(),
+      getActiveCartSettings(),
+    ]);
 
-    return orders.map(mapOrder);
+    return orders.map((order) => mapOrder(order, settings));
   },
 
   getUserOrderById: async ({ user_id, order_id }) => {
@@ -203,18 +306,21 @@ export const OrderService = {
       throw new Error("order_id is required");
     }
 
-    const order = await Order.findOne({
-      user_id: normalizedUserId,
-      order_id: normalizedOrderId,
-    })
-      .lean()
-      .exec();
+    const [order, settings] = await Promise.all([
+      Order.findOne({
+        user_id: normalizedUserId,
+        order_id: normalizedOrderId,
+      })
+        .lean()
+        .exec(),
+      getActiveCartSettings(),
+    ]);
 
     if (!order) {
       throw new Error("Order not found");
     }
 
-    return mapOrder(order);
+    return mapOrder(order, settings);
   },
 
   cancelUserOrder: async ({ user_id, order_id }) => {
@@ -259,13 +365,19 @@ export const OrderService = {
     return mapOrder(order);
   },
 
-  listAdminOrders: async ({ status, search, page = 1, limit = 10 }) => {
+  listAdminOrders: async ({ status, search, page = 1, limit = 10, user_id, role }) => {
     const parsedPage = Math.max(1, parseInt(page, 10) || 1);
     const parsedLimit = Math.min(100, Math.max(1, parseInt(limit, 10) || 10));
     const skip = (parsedPage - 1) * parsedLimit;
 
     const filter = {};
     const normalizedSearch = normalizeString(search);
+    const normalizedUserId = normalizeId(user_id);
+    const normalizedRole = normalizeString(role);
+
+    if (normalizedUserId) {
+      filter.user_id = normalizedUserId;
+    }
 
     if (status) {
       const normalizedStatus = normalizeString(status).toLowerCase();
@@ -279,7 +391,13 @@ export const OrderService = {
       const escapedSearch = normalizedSearch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       const searchRegex = new RegExp(escapedSearch, "i");
 
-      const users = await User.find({ name: searchRegex }).select("user_id -_id").lean().exec();
+      const users = await User.find({
+        name: searchRegex,
+        ...(normalizedRole ? { role: normalizedRole } : {}),
+      })
+        .select("user_id -_id")
+        .lean()
+        .exec();
       const userIds = users.map((user) => user.user_id);
 
       const searchOr = [
@@ -295,9 +413,10 @@ export const OrderService = {
       filter.$or = searchOr;
     }
 
-    const [orders, total] = await Promise.all([
+    const [orders, total, settings] = await Promise.all([
       Order.find(filter).sort({ createdAt: -1 }).skip(skip).limit(parsedLimit).lean().exec(),
       Order.countDocuments(filter),
+      getActiveCartSettings(),
     ]);
 
     const userIds = [...new Set(orders.map((order) => order.user_id).filter(Boolean))];
@@ -307,7 +426,7 @@ export const OrderService = {
     const userMap = new Map(users.map((user) => [user.user_id, user.name]));
 
     return {
-      orders: orders.map((order) => withUserName(order, userMap)),
+      orders: orders.map((order) => withUserName(order, userMap, settings)),
       pagination: {
         total,
         page: parsedPage,
@@ -325,7 +444,11 @@ export const OrderService = {
       throw new Error("order_id is required");
     }
 
-    const order = await Order.findOne({ order_id: normalizedOrderId }).lean().exec();
+    const [order, settings] = await Promise.all([
+      Order.findOne({ order_id: normalizedOrderId }).lean().exec(),
+      getActiveCartSettings(),
+    ]);
+
     if (!order) {
       throw new Error("Order not found");
     }
@@ -336,7 +459,7 @@ export const OrderService = {
       .exec();
     const userMap = new Map(user ? [[user.user_id, user.name]] : []);
 
-    return withUserName(order, userMap);
+    return withUserName(order, userMap, settings);
   },
 
   updateOrderStatus: async ({ order_id, status, paymentReceived }) => {

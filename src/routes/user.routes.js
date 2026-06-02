@@ -5,6 +5,18 @@ import { authorizeRoles, ROLES } from "../middlewares/role.middleware.js";
 
 const router = express.Router();
 
+/**
+ * User status: 1 = Active, 0 = Inactive
+ * List filter: GET /users?status=0|1
+ */
+
+router.patch(
+  "/user/location",
+  authMiddleware,
+  authorizeRoles(ROLES.USER),
+  UserController.updateUserLocation
+);
+
 router.get(
   "/users",
   authMiddleware,
@@ -38,6 +50,13 @@ router.patch(
   authMiddleware,
   authorizeRoles(ROLES.SUPER_ADMIN),
   UserController.editUser
+);
+
+router.delete(
+  "/users/:user_id",
+  authMiddleware,
+  authorizeRoles(ROLES.SUPER_ADMIN),
+  UserController.deleteUser
 );
 
 export default router;

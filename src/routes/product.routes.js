@@ -19,7 +19,7 @@ router.get(
 router.post(
   "/products",
   authMiddleware,
-  authorizeRoles(ROLES.SUPER_ADMIN),
+  authorizeRoles(ROLES.SUPER_ADMIN, ROLES.VENDOR),
   uploadProductImages,
   ProductController.createProduct
 );
@@ -27,7 +27,7 @@ router.post(
 router.put(
   "/products/:product_id",
   authMiddleware,
-  authorizeRoles(ROLES.SUPER_ADMIN),
+  authorizeRoles(ROLES.SUPER_ADMIN, ROLES.VENDOR),
   uploadProductImages,
   ProductController.updateProduct
 );
@@ -35,7 +35,7 @@ router.put(
 router.patch(
   "/products/:product_id",
   authMiddleware,
-  authorizeRoles(ROLES.SUPER_ADMIN),
+  authorizeRoles(ROLES.SUPER_ADMIN, ROLES.VENDOR),
   uploadProductImages,
   ProductController.editProduct
 );
@@ -43,21 +43,21 @@ router.patch(
 router.delete(
   "/products/:product_id",
   authMiddleware,
-  authorizeRoles(ROLES.SUPER_ADMIN),
+  authorizeRoles(ROLES.SUPER_ADMIN, ROLES.VENDOR),
   ProductController.deleteProduct
 );
 
 router.get(
   "/products",
   authMiddleware,
-  authorizeRoles(ROLES.SUPER_ADMIN, ROLES.USER),
+  authorizeRoles(ROLES.SUPER_ADMIN, ROLES.USER, ROLES.VENDOR),
   ProductController.getProducts
 );
 
 router.get(
   "/products/:product_id",
   authMiddleware,
-  authorizeRoles(ROLES.SUPER_ADMIN, ROLES.USER),
+  authorizeRoles(ROLES.SUPER_ADMIN, ROLES.USER, ROLES.VENDOR),
   ProductController.getProductById
 );
 

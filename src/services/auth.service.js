@@ -4,6 +4,7 @@ import crypto from "crypto";
 import User from "../models/user.model.js";
 import { sendEmail } from "../utils/email.js";
 import { sendTwilioSms } from "../utils/twilio-sms.js";
+import { assertUserCanLogin, mapUserStatus } from "../utils/user-status.js";
 
 const JWT_SECRET = process.env.JWT_SECRET || "dev-secret";
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || "365d";
@@ -51,6 +52,7 @@ const buildAuthResponseData = (user, token) => {
     name: user.name,
     email: user.email,
     role: user.role || "User",
+    status: mapUserStatus(user.status),
     profilePicture: user.profilePicture || "",
     token,
   };
@@ -213,6 +215,8 @@ export const AuthService = {
       throw new Error("Invalid credentials");
     }
 
+    assertUserCanLogin(user);
+
     const token = signAuthToken(user);
     return buildAuthResponseData(user, token);
   },
@@ -231,6 +235,8 @@ export const AuthService = {
     if (!isMatch) {
       throw new Error("Invalid credentials");
     }
+
+    assertUserCanLogin(user);
 
     const otp = String(Math.floor(100000 + Math.random() * 900000));
     const otpExpiry = new Date(Date.now() + 10 * 60 * 1000);
@@ -287,6 +293,8 @@ export const AuthService = {
     if (user.loginTwilioOtp !== String(otp).trim()) {
       throw new Error("Invalid OTP");
     }
+
+    assertUserCanLogin(user);
 
     user.loginTwilioOtp = null;
     user.loginTwilioOtpExpiry = null;

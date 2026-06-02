@@ -30,20 +30,25 @@ export const CategoryService = {
     };
   },
 
-  getCategories: async ({ page = 1, limit = 100 } = {}) => {
+  getCategories: async ({ page = 1, limit = 100, name } = {}) => {
     const parsedPage = Math.max(1, parseInt(page, 10) || 1);
     const parsedLimit = Math.min(100, Math.max(1, parseInt(limit, 10) || 100));
     const skip = (parsedPage - 1) * parsedLimit;
 
+    const filter = {};
+    if (name && String(name).trim()) {
+      filter.name = new RegExp(String(name).trim(), "i");
+    }
+
     const [categories, total] = await Promise.all([
-      Category.find({})
+      Category.find(filter)
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(parsedLimit)
         .select("category_id name description category_image -_id")
         .lean()
         .exec(),
-      Category.countDocuments({}),
+      Category.countDocuments(filter),
     ]);
 
     return {
